@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
+  <rect width="320" height="240" fill="#f7f2ea"/>
+  <rect x="34" y="38" width="252" height="164" rx="12" fill="#ffffff" stroke="#cfc4b5"/>
+  <text x="160" y="116" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#25211d">Before</text>
+  <text x="160" y="146" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#6d645b">Example screen</text>
+</svg>

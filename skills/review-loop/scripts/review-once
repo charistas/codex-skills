@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: review-once [options]
+
+Choose and optionally run one Codex review command for the current Git checkout.
+
+Options:
+  --mode auto|local|base|commit  Review target. Default: auto.
+  --base REF                     Base ref for --mode base or auto fallback.
+  --commit SHA                   Commit for --mode commit. Default: HEAD.
+  --codex-bin PATH               Codex binary. Default: codex.
+  --output FILE                  Also save review output to FILE.
+  --fetch                        Fetch origin before resolving base refs.
+  --dry-run                      Print the selected command, do not run it.
+  -h, --help                     Show this help.
+
+Auto mode:
+  dirty tree -> codex review --uncommitted
+  clean tree with commits ahead of upstream/base -> codex review --base <base>
+  otherwise -> codex review --commit HEAD
+EOF
+}
+
+mode=auto
+base_ref=
+commit_ref=HEAD
+codex_bin=${CODEX_BIN:-codex}
+output=${CODEX_REVIEW_OUTPUT:-}
+fetch=false
+dry_run=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      mode=${2:-}
+      shift 2
+      ;;
+    --base)
+      base_ref=${2:-}
+      shift 2
+      ;;
+    --commit)
+      commit_ref=${2:-}
+      shift 2
+      ;;
+    --codex-bin)
+      codex_bin=${2:-}
+      shift 2
+      ;;
+    --output)
+      output=${2:-}
+      shift 2
+      ;;
+    --fetch)
+      fetch=true
+      shift
+      ;;
+    --dry-run)
+      dry_run=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$mode" in
+  auto|local|base|commit) ;;
+  *)
+    echo "invalid --mode: $mode" >&2
+    exit 2
+    ;;
+esac
+
+git rev-parse --show-toplevel >/dev/null
+
+if [[ "$fetch" == true ]]; then
+  git fetch origin --quiet || {
+    echo "warning: git fetch origin failed; using existing refs" >&2
+  }
+fi
+
+current_branch=$(git branch --show-current 2>/dev/null || true)
+dirty=false
+if [[ -n "$(git status --porcelain=v1)" ]]; then
+  dirty=true
+fi
+
+resolve_upstream() {
+  git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true
+}
+
+resolve_origin_head() {
+  git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true
+}
+
+ref_exists() {
+  git rev-parse --verify --quiet "$1^{commit}" >/dev/null
+}
+
+commits_ahead_of() {
+  local ref=$1
+  local counts ahead
+
+  if ! ref_exists "$ref"; then
+    return 1
+  fi
+
+  counts=$(git rev-list --left-right --count "$ref"...HEAD 2>/dev/null || true)
+  if [[ -z "$counts" ]]; then
+    return 1
+  fi
+
+  read -r _ ahead <<<"$counts"
+  [[ "${ahead:-0}" != "0" ]]
+}
+
+choose_base() {
+  local upstream origin_head
+
+  if [[ -n "$base_ref" ]]; then
+    printf '%s\n' "$base_ref"
+    return
+  fi
+
+  upstream=$(resolve_upstream)
+  if [[ -n "$upstream" ]]; then
+    printf '%s\n' "$upstream"
+    return
+  fi
+
+  origin_head=$(resolve_origin_head)
+  if [[ -n "$origin_head" ]]; then
+    printf '%s\n' "$origin_head"
+    return
+  fi
+
+  printf '%s\n' "origin/main"
+}
+
+selected_kind=
+selected_base=
+
+case "$mode" in
+  local)
+    selected_kind=local
+    ;;
+  base)
+    selected_kind=base
+    selected_base=$(choose_base)
+    ;;
+  commit)
+    selected_kind=commit
+    ;;
+  auto)
+    if [[ "$dirty" == true ]]; then
+      selected_kind=local
+      selected_base=$(choose_base)
+    else
+      selected_base=$(choose_base)
+      if commits_ahead_of "$selected_base"; then
+        selected_kind=base
+      else
+        selected_kind=commit
+      fi
+    fi
+    ;;
+esac
+
+case "$selected_kind" in
+  local)
+    review_cmd=("$codex_bin" review --uncommitted)
+    ;;
+  base)
+    if ! ref_exists "$selected_base"; then
+      echo "base ref not found: $selected_base" >&2
+      exit 1
+    fi
+    review_cmd=("$codex_bin" review --base "$selected_base")
+    ;;
+  commit)
+    if ! ref_exists "$commit_ref"; then
+      echo "commit ref not found: $commit_ref" >&2
+      exit 1
+    fi
+    review_cmd=("$codex_bin" review --commit "$commit_ref")
+    ;;
+  *)
+    echo "could not select review target" >&2
+    exit 1
+    ;;
+esac
+
+printf 'review-loop target: %s\n' "$selected_kind"
+printf 'branch: %s\n' "${current_branch:-detached}"
+if [[ -n "$selected_base" ]]; then
+  printf 'base: %s\n' "$selected_base"
+fi
+printf 'dirty: %s\n' "$dirty"
+printf 'review:'
+printf ' %q' "${review_cmd[@]}"
+printf '\n'
+
+if [[ "$dirty" == true && -n "$selected_base" ]] && commits_ahead_of "$selected_base"; then
+  printf 'note: committed work also exists ahead of %s; after dirty review is handled, run a base review.\n' "$selected_base"
+fi
+
+if [[ -n "$output" ]]; then
+  printf 'output: %s\n' "$output"
+fi
+
+if [[ "$dry_run" == true ]]; then
+  exit 0
+fi
+
+if [[ -n "$output" ]]; then
+  mkdir -p "$(dirname "$output")"
+  "${review_cmd[@]}" 2>&1 | tee "$output"
+else
+  "${review_cmd[@]}"
+fi

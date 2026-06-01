@@ -1,0 +1,23 @@
+{
+  "mode": "comparison",
+  "title": "Example Visual Diff",
+  "subtitle": "Before and after screenshots",
+  "before_label": "Before",
+  "after_label": "After",
+  "meta": ["Example: local fixtures"],
+  "screens": [
+    {
+      "title": "Main Screen",
+      "note": "Same screen before and after a UI change.",
+      "before": "fixtures/01-before.png",
+      "after": "fixtures/01-after.png"
+    },
+    {
+      "title": "New Screen",
+      "note": "Demonstrates a row with no matching before screenshot.",
+      "before": null,
+      "after": "fixtures/02-after.png",
+      "empty_before": "New in the current flow."
+    }
+  ]
+}

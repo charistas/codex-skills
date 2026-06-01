@@ -1,0 +1,20 @@
+{
+  "title": "Example Screen Flow",
+  "subtitle": "Ordered walkthrough from local fixtures",
+  "meta": ["Example: local fixtures"],
+  "screens": [
+    {
+      "title": "Entry",
+      "note": "Starting point for the flow.",
+      "image": "fixtures/01-after.png"
+    },
+    {
+      "title": "Next Step",
+      "note": "A second reachable screen.",
+      "image": "fixtures/02-after.png"
+    }
+  ],
+  "omitted": [
+    "Permission prompts are not represented in this fixture set."
+  ]
+}

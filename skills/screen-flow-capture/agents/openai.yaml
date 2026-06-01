@@ -1,0 +1,4 @@
+interface:
+  display_name: "Screen Flow Capture"
+  short_description: "Capture app flows into shareable HTML"
+  default_prompt: "Use $screen-flow-capture to capture screenshots of this app flow and build a shareable HTML page."

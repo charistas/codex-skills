@@ -1,0 +1,4 @@
+interface:
+  display_name: "Visual Diff"
+  short_description: "Compare before and after screens in HTML"
+  default_prompt: "Use $visual-diff to create an HTML before/after screen comparison for my latest UI changes."
