@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+helper="$script_dir/review-once"
+tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/review-loop-tests.XXXXXX")
+checks=0
+
+cleanup() {
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  printf '%s\n' "${result:-}" >&2
+  exit 1
+}
+
+run_in() {
+  local repo=$1
+  shift
+  set +e
+  result=$(cd "$repo" && "$helper" "$@" 2>&1)
+  result_status=$?
+  set -e
+}
+
+assert_status() {
+  local expected=$1
+  [[ "$result_status" -eq "$expected" ]] || fail "expected status $expected, got $result_status"
+  checks=$((checks + 1))
+}
+
+assert_contains() {
+  local expected=$1
+  [[ "$result" == *"$expected"* ]] || fail "missing output: $expected"
+  checks=$((checks + 1))
+}
+
+origin="$tmp_root/origin.git"
+repo="$tmp_root/work"
+git init -q --bare "$origin"
+git --git-dir="$origin" symbolic-ref HEAD refs/heads/main
+git clone -q "$origin" "$repo" 2>/dev/null
+git -C "$repo" config user.name "Review Loop Test"
+git -C "$repo" config user.email "review-loop@example.invalid"
+git -C "$repo" commit -q --allow-empty -m initial
+git -C "$repo" push -q -u origin main
+git -C "$repo" remote set-head origin -a >/dev/null
+
+run_in "$repo" --dry-run
+assert_status 0
+assert_contains "review-loop target: commit"
+
+printf 'dirty\n' >"$repo/dirty.txt"
+run_in "$repo" --dry-run
+assert_status 0
+assert_contains "review-loop target: local"
+rm -f "$repo/dirty.txt"
+
+git -C "$repo" checkout -q -b feature
+git -C "$repo" commit -q --allow-empty -m feature
+git -C "$repo" push -q -u origin feature
+
+run_in "$repo" --dry-run
+assert_status 0
+assert_contains "base: origin/main"
+assert_contains "review: codex review --base origin/main"
+
+git -C "$repo" commit -q --allow-empty -m local
+printf 'dirty\n' >"$repo/dirty.txt"
+run_in "$repo" --dry-run
+assert_status 0
+assert_contains "committed work also exists"
+assert_contains "The tree need not be clean"
+rm -f "$repo/dirty.txt"
+
+run_in "$repo" --mode base --base missing/ref --dry-run
+assert_status 1
+assert_contains "base ref not found: missing/ref"
+
+local_repo="$tmp_root/local-only"
+git init -q "$local_repo"
+git -C "$local_repo" config user.name "Review Loop Test"
+git -C "$local_repo" config user.email "review-loop@example.invalid"
+git -C "$local_repo" commit -q --allow-empty -m initial
+run_in "$local_repo" --dry-run
+assert_status 1
+assert_contains "could not resolve comparison base"
+
+run_in "$repo" --mode
+assert_status 2
+assert_contains "missing value for --mode"
+
+run_in "$repo" --output "$repo/review.log" --dry-run
+assert_status 2
+assert_contains "--output must be outside the Git worktree"
+
+logs="$tmp_root/logs"
+mkdir -p "$logs"
+logs=$(cd "$logs" && pwd -P)
+run_in "$repo" --config 'mcp_servers.test.enabled=false' --output "$logs/review.log" --dry-run
+assert_status 0
+assert_contains "-c mcp_servers.test.enabled=false"
+assert_contains "output: $logs/review.log"
+
+run_in "$repo" --mode base --base origin/main --fetch --dry-run
+assert_status 0
+assert_contains "review-loop target: base"
+
+git -C "$repo" remote add broken "$tmp_root/does-not-exist"
+git -C "$repo" update-ref refs/remotes/broken/main "$(git -C "$repo" rev-parse origin/main)"
+run_in "$repo" --mode base --base broken/main --fetch --dry-run
+assert_status 1
+assert_contains "fetch failed for remote: broken"
+
+run_in "$repo" --mode commit --codex-bin /usr/bin/true --output "$logs/executed.log"
+assert_status 0
+[[ -f "$logs/executed.log" ]] || fail "expected output file to be created"
+checks=$((checks + 1))
+
+printf 'review-once tests: %s checks passed\n' "$checks"

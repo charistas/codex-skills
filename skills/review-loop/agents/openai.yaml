@@ -1,6 +1,6 @@
 interface:
   display_name: "Review Loop"
   short_description: "Bounded review-fix-review closeout"
-  default_prompt: "Use $review-loop to sanity-check review findings, fix accepted issues, verify, and rerun review until clean or bounded."
+  default_prompt: "Use $review-loop to review current local changes, fix verified findings, run appropriate checks, and stop after at most three review invocations."
 policy:
   allow_implicit_invocation: true

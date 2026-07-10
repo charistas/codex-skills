@@ -1,75 +1,68 @@
 ---
 name: review-loop
-description: "Run a bounded Codex review/fix/re-review loop for current local work. Use when the user asks for repeated Codex review, review-loop closeout, fix accepted review findings, or says to sanity-check review findings before changing code."
+description: "Run a bounded Codex review/fix/re-review loop for current local work. Use when the user asks for repeated Codex review, review-loop closeout, fixes for accepted review findings, or a sanity-check of findings before changing code."
 ---
 
 # Review Loop
 
-Run a sequential local review closeout loop. This skill is optimized for solo development on the current checkout.
+Run a sequential local review closeout loop on the current checkout. Keep the work small and reviewable.
 
-Do not spawn subagents, create worktrees, run tests in parallel with review, or start extra simulators unless the user explicitly asks.
+Do not spawn subagents, create worktrees, run tests in parallel with review, start extra simulators, or commit, stash, or push merely to change review targets unless the user explicitly asks.
 
 ## Defaults
 
-- Maximum review/fix iterations: 3.
-- Continue past 3 only if remaining findings are clearly actionable, fixes are localized, verification is still runnable, and scope is not drifting into broad refactoring.
-- Treat `codex review` output as advisory. Verify each finding in the real code path before editing.
-- Prefer small root-cause fixes at the right ownership boundary.
-- Reject speculative edge cases, style churn, broad rewrites, and fixes that add more complexity than the bug justifies.
+- Run at most 3 `codex review` invocations total, including retries and all review targets. Ask before exceeding the cap.
+- Treat review output as advisory. Verify each finding in the real code path before editing.
+- Prefer localized root-cause fixes. Reject speculative edge cases, style churn, and broad rewrites.
 
 ## Target Selection
 
-Use the smallest useful review target:
+Use the smallest targets that cover all current work:
 
-1. Dirty worktree: `codex review --uncommitted`
-2. Clean tree with local commits ahead of upstream/base: `codex review --base <upstream-or-base>`
-3. Clean tree with no obvious base delta: `codex review --commit HEAD`
+1. Review dirty and untracked work with `codex review --uncommitted`.
+2. Review committed branch work against its actual integration base with `codex review --base <base>`.
+3. Use `codex review --commit <sha>` only when the user wants one commit reviewed or no broader branch delta is intended.
 
-If both committed local work and dirty changes exist, review dirty changes first. After fixing dirty findings and the tree is clean, run a base or commit review so committed work is not skipped.
+For the comparison base, prefer an explicit `--base`. Otherwise use the tracking remote's default branch, such as `origin/HEAD`. Never treat a feature branch's same-name tracking ref as its integration base.
 
-The bundled helper can choose the review target:
+When dirty and committed work both exist, finish the uncommitted phase and then run the base phase. The tree does not need to become clean between phases; do not commit or stash just for review. The uncommitted phase covers untracked files, while the base phase provides the cumulative tracked branch diff.
+
+Use the bundled helper to inspect or run one target:
 
 ```bash
-scripts/review-once --dry-run
-scripts/review-once
+~/.codex/skills/review-loop/scripts/review-once --dry-run
+~/.codex/skills/review-loop/scripts/review-once
 ```
 
-Run those commands from the installed skill directory, or use the absolute path to `review-once`.
-Use `--mode local`, `--mode base`, or `--mode commit` when the user specifies the target.
+Use `--mode local`, `--mode base`, or `--mode commit` for an explicit target. Use repeatable `--config KEY=VALUE` for narrow Codex configuration overrides. Save output only to an absolute path outside the Git worktree.
 
 ## Loop
 
-For each iteration:
+Before review:
 
-1. Run known cheap verification first when the touched scope has an obvious command.
-2. Run `codex review` using the selected target.
-3. Before changing code, sanity-check every review finding:
-   - root cause
-   - decision: accepted, rejected, or needs user decision
-   - proposed fix
-   - regression risk
-   - verification plan
-4. If missing context or a product/design/security decision is needed, stop and ask the user.
-5. Fix accepted findings only.
-6. Rerun focused verification for the touched scope.
-7. Rerun review.
+1. Record `git status` and run one cheap baseline verification when the touched scope has an obvious command.
+2. Run the helper with `--dry-run`. Record the selected target and whether its note identifies a second base phase.
 
-Stop when:
+For each review invocation, up to the hard cap:
 
-- no accepted actionable findings remain
-- only rejected findings remain
-- maximum iterations is reached
-- verification is blocked
-- a finding needs user judgment
+1. Run the selected review. Record Git status before and after; the helper warns if tracked or untracked state changes.
+2. If review fails, retry once only when the failure is clearly transient. Otherwise stop and report the exact command and first relevant error.
+3. Sanity-check each finding: root cause, accepted/rejected/needs-user-decision, proposed fix, regression risk, and verification plan. Treat a real verification failure as actionable even when review did not report it.
+4. Fix accepted findings only. Do not make a judgment-dependent change; independent safe fixes may proceed.
+5. Run focused verification for the changed scope.
+6. Re-review the same target after fixes, or advance to the pending base phase when the current phase has no accepted findings.
+
+At closeout, run the full relevant local verification gate once when it is available and runnable. A failing test needs investigation; a missing dependency, unavailable service, or environment limitation is a verification block.
+
+Stop when all planned targets have no accepted findings, the review cap is reached, verification is blocked, review cannot run, or user judgment is required.
 
 ## Reporting
 
-In the final handoff, include:
+Report:
 
-- review command or helper invocation used
-- accepted findings and fixes
-- rejected findings with brief reasons
-- verification commands and results
-- whether the final review was clean, or why the loop stopped
+- review targets and commands used
+- accepted fixes, rejected findings, and pending user decisions
+- focused and final verification results
+- whether the final review was clean, or the exact stop reason
 
-If verification is blocked, report the exact command and the first relevant error line.
+For a review or verification block, include the exact command and first relevant error line.
